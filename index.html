@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- iPad 加入主畫面全螢幕設定 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="生活資訊看板" />
+  <title>長者友善 iPad 三地天氣與巴士電台看板</title>
+
+  <!-- 載入圓潤清晰中文字體 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&family=Noto+Sans+TC:wght@500;700;900&display=swap" rel="stylesheet" />
+
+  <!-- 載入 Tailwind CSS 與 HLS.js（供非 Safari 瀏覽器播放 m3u8 電台） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+
+  <style>
+    /* 整體日系柔和粉彩底色 + 圓點背景，鎖定 11 吋 iPad 橫向單頁滿版無捲動 */
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'M PLUS Rounded 1c', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "PingFang HK", "Microsoft JhengHei", sans-serif;
+      background-color: #fff6e9;
+      background-image: radial-gradient(#f8b4c4 2.5px, transparent 2.5px);
+      background-size: 28px 28px;
+      color: #1e293b;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    /* 主卡片外框與內虛線設計（日系可愛清晰風格） */
+    .nook-card {
+      background: #ffffff;
+      border-radius: 22px;
+      border: 3px solid #fbd3df;
+      box-shadow: 0 6px 16px rgba(219, 134, 158, 0.14);
+    }
+
+    .nook-dashed-divider {
+      border-bottom: 2.5px dashed #f9c8d6;
+    }
+
+    /* 數碼等寬數字，防止秒數跳動時版面左右搖晃 */
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 按鈕立體按壓手感 */
+    .btn-press {
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.15s ease;
+    }
+    .btn-press:active {
+      transform: scale(0.96);
+    }
+
+    /* 播放中聲波跳動動畫 */
+    @keyframes soundWave {
+      0%, 100% { transform: scaleY(0.4); }
+      50% { transform: scaleY(1); }
+    }
+    .wave-bar {
+      animation: soundWave 0.9s ease-in-out infinite;
+    }
+    .wave-bar:nth-child(2) { animation-delay: 0.2s; }
+    .wave-bar:nth-child(3) { animation-delay: 0.4s; }
+  </style>
+</head>
+<body class="min-h-screen md:h-dvh md:overflow-hidden p-2.5 md:p-3.5 grid grid-rows-[auto_1fr_auto] gap-2.5 md:gap-3">
+
+  <!-- ==================== 1. 頂部三地實時時鐘列（單行精簡高對比） ==================== -->
+  <header class="nook-card px-3.5 py-2 md:px-5 md:py-2.5 flex flex-wrap md:flex-nowrap items-center justify-between gap-2">
+    
+    <!-- 香港主時鐘（特大高對比） -->
+    <div class="flex items-center gap-2.5 md:gap-3.5">
+      <div class="flex items-center gap-1.5 bg-teal-50 border-2 border-teal-200 px-2.5 py-1 rounded-xl shrink-0">
+        <span class="text-xl md:text-2xl">🇭🇰</span>
+        <span class="text-base md:text-lg font-black text-teal-900">香港</span>
+      </div>
+      <div id="hk-time" class="text-3xl sm:text-4xl md:text-[42px] leading-none font-black text-teal-800 tracking-tight tabular-nums">
+        --:--:--
+      </div>
+      <div id="hk-date" class="text-base md:text-xl font-extrabold text-rose-600 bg-rose-50 px-2.5 py-1 rounded-xl border-2 border-rose-200 whitespace-nowrap">
+        載入日期中...
+      </div>
+    </div>
+
+    <!-- 台灣楠梓 & 英國法恩伯勒 地區時間 + 更新按鈕 -->
+    <div class="flex items-center gap-2 md:gap-2.5 ml-auto">
+      
+      <!-- 台灣楠梓時間卡 -->
+      <div class="flex items-center gap-2 bg-amber-50 border-2 border-amber-300 px-2.5 py-1 rounded-xl">
+        <span class="text-xl">🇹🇼</span>
+        <div class="leading-tight">
+          <div class="text-xs md:text-sm font-extrabold text-amber-900">台灣楠梓</div>
+          <div class="flex items-baseline gap-1.5">
+            <span id="tw-time" class="text-xl md:text-2xl font-black text-slate-900 tabular-nums">--:--</span>
+            <span id="tw-date" class="text-xs md:text-sm font-bold text-amber-800">--/--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 英國法恩伯勒時間卡 -->
+      <div class="flex items-center gap-2 bg-indigo-50 border-2 border-indigo-300 px-2.5 py-1 rounded-xl">
+        <span class="text-xl">🇬🇧</span>
+        <div class="leading-tight">
+          <div class="text-xs md:text-sm font-extrabold text-indigo-900">英國法恩伯勒</div>
+          <div class="flex items-baseline gap-1.5">
+            <span id="uk-time" class="text-xl md:text-2xl font-black text-slate-900 tabular-nums">--:--</span>
+            <span id="uk-date" class="text-xs md:text-sm font-bold text-indigo-800">--/--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 手動更新按鈕與最後更新時間 -->
+      <div class="flex items-center gap-2">
+        <div class="hidden lg:flex flex-col text-right text-xs font-bold text-slate-600 leading-tight">
+          <span>🌤️ <span id="last-weather-update">--:--</span></span>
+          <span>🚌 <span id="last-bus-update">--:--</span></span>
+        </div>
+        <button id="refresh-btn" onclick="manualRefreshAll()" class="btn-press bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-base md:text-lg px-3.5 py-2 rounded-xl border-2 border-amber-600 shadow-sm flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+          <span id="refresh-icon">🔄</span>
+          <span>更新</span>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ==================== 2. 中間主要雙欄區域（左：天氣 58% | 右：巴士 42%） ==================== -->
+  <main class="grid grid-cols-1 md:grid-cols-12 gap-2.5 md:gap-3.5 min-h-0">
+
+    <!-- 左欄：三地天氣預報（佔 7 欄 ≈ 58.3% 寬度，大字高對比） -->
+    <section class="md:col-span-7 nook-card p-3 md:p-4 flex flex-col justify-between min-h-0">
+      <div class="nook-dashed-divider pb-1.5 mb-2 flex items-center justify-between shrink-0">
+        <h2 class="text-xl md:text-2xl font-black text-slate-900 flex items-center gap-2">
+          <span>☀️</span>
+          <span>三地即時與今日天氣預報</span>
+        </h2>
+        <span id="weather-status-badge" class="bg-rose-100 text-rose-800 font-extrabold text-xs md:text-sm px-2.5 py-0.5 rounded-lg border border-rose-300">
+          每15分鐘自動更新
+        </span>
+      </div>
+
+      <!-- 三個地區天氣卡片（平均撐滿中間高度，無需捲動） -->
+      <div id="weather-container" class="flex-1 grid grid-rows-3 gap-2 md:gap-2.5 min-h-0">
+        
+        <!-- 卡片 1：香港旺角 -->
+        <div id="weather-hk" class="bg-teal-50/90 border-2 border-teal-300 rounded-2xl px-3.5 py-2 flex items-center justify-between gap-2 min-h-0">
+          <div class="flex items-center gap-3 min-w-0">
+            <div id="hk-w-icon" class="text-4xl md:text-5xl bg-white p-2 rounded-xl shadow-sm border border-teal-200 shrink-0">⛅</div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xl md:text-2xl font-black text-teal-950">香港 旺角</span>
+                <span id="hk-w-desc" class="bg-teal-700 text-white text-sm md:text-base font-bold px-2.5 py-0.5 rounded-lg">讀取中...</span>
+              </div>
+              <div class="text-base md:text-lg font-bold text-slate-800 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <span>今日 <strong id="hk-w-range" class="text-slate-950">-- ~ --°C</strong></span>
+                <span class="bg-white/80 px-2 py-0.5 rounded-lg border border-teal-200">💧 濕度 <strong id="hk-w-hum" class="text-teal-900">--%</strong></span>
+                <span class="bg-white/80 px-2 py-0.5 rounded-lg border border-teal-200">☔ 降雨 <strong id="hk-w-rain" class="text-rose-700">--%</strong></span>
+              </div>
+            </div>
+          </div>
+          <div class="text-4xl md:text-5xl font-black text-amber-600 tabular-nums shrink-0 pl-1">
+            <span id="hk-w-temp">--</span>°
+          </div>
+        </div>
+
+        <!-- 卡片 2：台灣楠梓 -->
+        <div id="weather-tw" class="bg-amber-50/90 border-2 border-amber-300 rounded-2xl px-3.5 py-2 flex items-center justify-between gap-2 min-h-0">
+          <div class="flex items-center gap-3 min-w-0">
+            <div id="tw-w-icon" class="text-4xl md:text-5xl bg-white p-2 rounded-xl shadow-sm border border-amber-200 shrink-0">☀️</div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xl md:text-2xl font-black text-amber-950">台灣 楠梓</span>
+                <span id="tw-w-desc" class="bg-amber-700 text-white text-sm md:text-base font-bold px-2.5 py-0.5 rounded-lg">讀取中...</span>
+              </div>
+              <div class="text-base md:text-lg font-bold text-slate-800 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <span>今日 <strong id="tw-w-range" class="text-slate-950">-- ~ --°C</strong></span>
+                <span class="bg-white/80 px-2 py-0.5 rounded-lg border border-amber-200">💧 濕度 <strong id="tw-w-hum" class="text-amber-900">--%</strong></span>
+                <span class="bg-white/80 px-2 py-0.5 rounded-lg border border-amber-200">☔ 降雨 <strong id="tw-w-rain" class="text-rose-700">--%</strong></span>
+              </div>
+            </div>
+          </div>
+          <div class="text-4xl md:text-5xl font-black text-orange-600 tabular-nums shrink-0 pl-1">
+            <span id="tw-w-temp">--</span>°
+          </div>
+        </div>
+
+        <!-- 卡片 3：英國法恩伯勒 -->
+        <div id="weather-uk" class="bg-indigo-50/90 border-2 border-indigo-300 rounded-2xl px-3.5 py-2 flex items-center justify-between gap-2 min-h-0">
+          <div class="flex items-center gap-3 min-w-0">
+            <div id="uk-w-icon" class="text-4xl md:text-5xl bg-white p-2 rounded-xl shadow-sm border border-indigo-200 shrink-0">🌦️</div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xl md:text-2xl font-black text-indigo-950">英國 法恩伯勒</span>
+                <span id="uk-w-desc" class="bg-indigo-700 text-white text-sm md:text-base font-bold px-2.5 py-0.5 rounded-lg">讀取中...</span>
+              </div>
+              <div class="text-base md:text-lg font-bold text-slate-800 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <span>今日 <strong id="uk-w-range" class="text-slate-950">-- ~ --°C</strong></span>
+                <span class="bg-white/80 px-2 py-0.5 rounded-lg border border-indigo-200">💧 濕度 <strong id="uk-w-hum" class="text-indigo-900">--%</strong></span>
+                <span class="bg-white/80 px-2 py-0.5 rounded-lg border border-indigo-200">☔ 降雨 <strong id="uk-w-rain" class="text-rose-700">--%</strong></span>
+              </div>
+            </div>
+          </div>
+          <div class="text-4xl md:text-5xl font-black text-indigo-700 tabular-nums shrink-0 pl-1">
+            <span id="uk-w-temp">--</span>°
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 右欄：城巴 970 / 970X 旺角登打士街站往港島方向（佔 5 欄 ≈ 41.7% 寬度，緊湊清晰） -->
+    <section class="md:col-span-5 nook-card p-3 md:p-4 flex flex-col justify-between min-h-0">
+      <div class="nook-dashed-divider pb-1.5 mb-2 flex items-center justify-between gap-1 shrink-0">
+        <h2 class="text-lg md:text-xl font-black text-slate-900 flex items-center gap-1.5">
+          <span>🚌</span>
+          <span>往港島 (旺角登打士街)</span>
+        </h2>
+        <span id="bus-status-badge" class="bg-rose-100 text-rose-800 font-extrabold text-xs md:text-sm px-2 py-0.5 rounded-lg border border-rose-300 shrink-0">
+          城巴預報
+        </span>
+      </div>
+
+      <!-- 兩條路線緊湊卡片容器 -->
+      <div class="flex-1 grid grid-rows-2 gap-2.5 min-h-0">
+
+        <!-- 路線 970 卡片 -->
+        <div class="bg-slate-50 border-2 border-slate-300 rounded-2xl p-3 flex flex-col justify-between min-h-0">
+          <div class="flex items-center justify-between gap-2 border-b-2 border-dashed border-slate-300 pb-2">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="bg-teal-700 text-white font-black text-2xl md:text-3xl px-3.5 py-1.5 rounded-xl shadow-sm shrink-0">
+                970
+              </div>
+              <div class="min-w-0">
+                <div class="text-lg md:text-xl font-black text-slate-950 truncate">往 數碼港</div>
+                <div class="text-sm md:text-base font-bold text-teal-800 truncate">🚏 登打士街站</div>
+              </div>
+            </div>
+
+            <!-- 第 1 班（最近一班車） -->
+            <div id="eta-970-1" class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border-2 border-emerald-300 shadow-sm shrink-0">
+              <span class="text-xl md:text-2xl font-black text-emerald-700 tabular-nums">讀取中...</span>
+            </div>
+          </div>
+
+          <!-- 第 2 班及第 3 班車時間 -->
+          <div class="pt-1.5 flex flex-col gap-1">
+            <div class="text-xs md:text-sm font-extrabold text-slate-600">後續班次（第2、3班）：</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <div id="eta-970-2" class="bg-teal-100 text-teal-950 border border-teal-300 font-black text-sm md:text-base px-2.5 py-1 rounded-lg tabular-nums text-center truncate">
+                2) --
+              </div>
+              <div id="eta-970-3" class="bg-teal-100 text-teal-950 border border-teal-300 font-black text-sm md:text-base px-2.5 py-1 rounded-lg tabular-nums text-center truncate">
+                3) --
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 路線 970X 卡片 -->
+        <div class="bg-slate-50 border-2 border-slate-300 rounded-2xl p-3 flex flex-col justify-between min-h-0">
+          <div class="flex items-center justify-between gap-2 border-b-2 border-dashed border-slate-300 pb-2">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="bg-rose-700 text-white font-black text-2xl md:text-3xl px-3.5 py-1.5 rounded-xl shadow-sm shrink-0">
+                970X
+              </div>
+              <div class="min-w-0">
+                <div class="text-lg md:text-xl font-black text-slate-950 truncate">往 香港仔</div>
+                <div class="text-sm md:text-base font-bold text-rose-800 truncate">🚏 登打士街站</div>
+              </div>
+            </div>
+
+            <!-- 第 1 班（最近一班車） -->
+            <div id="eta-970X-1" class="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border-2 border-emerald-300 shadow-sm shrink-0">
+              <span class="text-xl md:text-2xl font-black text-emerald-700 tabular-nums">讀取中...</span>
+            </div>
+          </div>
+
+          <!-- 第 2 班及第 3 班車時間 -->
+          <div class="pt-1.5 flex flex-col gap-1">
+            <div class="text-xs md:text-sm font-extrabold text-slate-600">後續班次（第2、3班）：</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <div id="eta-970X-2" class="bg-rose-100 text-rose-950 border border-rose-300 font-black text-sm md:text-base px-2.5 py-1 rounded-lg tabular-nums text-center truncate">
+                2) --
+              </div>
+              <div id="eta-970X-3" class="bg-rose-100 text-rose-950 border border-rose-300 font-black text-sm md:text-base px-2.5 py-1 rounded-lg tabular-nums text-center truncate">
+                3) --
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== 3. 底部網上電台播放器（精簡單行設計，保留 RTHK + 903） ==================== -->
+  <footer class="nook-card px-3.5 py-2 md:px-5 md:py-2.5 flex flex-wrap md:flex-nowrap items-center justify-between gap-2">
+    
+    <!-- 左側：當前電台名稱與狀態 -->
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="text-2xl md:text-3xl bg-amber-100 p-1.5 rounded-xl border-2 border-amber-300 shrink-0">📻</div>
+      <div class="leading-tight min-w-0">
+        <div id="radio-current-name" class="text-base md:text-lg font-black text-slate-950 truncate">
+          香港電台 第一台 (RTHK 1)
+        </div>
+        <div id="radio-status" class="text-xs md:text-sm font-extrabold text-amber-700 flex items-center gap-1.5 truncate">
+          <span>準備就緒 ✨（按右側播放）</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 中間：電台頻道選擇按鈕（緊湊圓角按鈕） -->
+    <div class="flex items-center gap-1.5 md:gap-2 flex-wrap justify-center">
+      <button onclick="selectStation(0)" id="station-btn-0" class="station-btn btn-press bg-rose-500 text-white border-2 border-rose-600 font-black text-sm md:text-base px-3 py-1.5 rounded-xl shadow-sm cursor-pointer">
+        RTHK 1
+      </button>
+      <button onclick="selectStation(1)" id="station-btn-1" class="station-btn btn-press bg-slate-100 hover:bg-slate-200 text-slate-900 border-2 border-slate-300 font-black text-sm md:text-base px-3 py-1.5 rounded-xl cursor-pointer">
+        RTHK 2
+      </button>
+      <button onclick="selectStation(2)" id="station-btn-2" class="station-btn btn-press bg-slate-100 hover:bg-slate-200 text-slate-900 border-2 border-slate-300 font-black text-sm md:text-base px-3 py-1.5 rounded-xl cursor-pointer">
+        RTHK 5
+      </button>
+      <button onclick="selectStation(3)" id="station-btn-3" class="station-btn btn-press bg-slate-100 hover:bg-slate-200 text-slate-900 border-2 border-slate-300 font-black text-sm md:text-base px-3 py-1.5 rounded-xl cursor-pointer">
+        叱咤 903
+      </button>
+    </div>
+
+    <!-- 右側：播放 / 暫停控制按鈕 -->
+    <div class="shrink-0 ml-auto md:ml-0">
+      <button id="play-pause-btn" onclick="togglePlayPause()" class="btn-press bg-emerald-500 hover:bg-emerald-600 text-white font-black text-base md:text-xl px-5 py-2 rounded-xl border-2 border-emerald-700 shadow-sm flex items-center gap-2 cursor-pointer">
+        <span id="play-btn-icon">▶</span>
+        <span id="play-btn-text">播放</span>
+      </button>
+    </div>
+
+    <!-- 隱藏原生 Audio 播放器 -->
+    <audio id="radio-audio" playsinline preload="none"></audio>
+  </footer>
+
+  <!-- ==================== JavaScript 邏輯區 ==================== -->
+  <script>
+    /********************************************************************
+     * 1. 三地實時時鐘與日期模組（香港、台灣楠梓、英國法恩伯勒）
+     ********************************************************************/
+    const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'];
+
+    function updateClocks() {
+      try {
+        const now = new Date();
+
+        // 香港時間 (Asia/Hong_Kong)
+        const hkParts = getTimeParts(now, 'Asia/Hong_Kong');
+        document.getElementById('hk-time').textContent = `${hkParts.hour}:${hkParts.minute}:${hkParts.second}`;
+        document.getElementById('hk-date').textContent = `${hkParts.month}月${hkParts.day}日 (${hkParts.weekday})`;
+
+        // 台灣楠梓時間 (Asia/Taipei)
+        const twParts = getTimeParts(now, 'Asia/Taipei');
+        document.getElementById('tw-time').textContent = `${twParts.hour}:${twParts.minute}`;
+        document.getElementById('tw-date').textContent = `${twParts.month}/${twParts.day}(${twParts.weekday})`;
+
+        // 英國法恩伯勒時間 (Europe/London)
+        const ukParts = getTimeParts(now, 'Europe/London');
+        document.getElementById('uk-time').textContent = `${ukParts.hour}:${ukParts.minute}`;
+        document.getElementById('uk-date').textContent = `${ukParts.month}/${ukParts.day}(${ukParts.weekday})`;
+      } catch (err) {
+        console.error('時鐘更新異常:', err);
+      }
+    }
+
+    function getTimeParts(dateObj, timeZone) {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      const parts = formatter.formatToParts(dateObj);
+      const map = {};
+      parts.forEach(p => { map[p.type] = p.value; });
+
+      // 計算該時區星期幾（中文）
+      const tzDate = new Date(dateObj.toLocaleString('en-US', { timeZone }));
+      const weekdayZh = WEEKDAYS_ZH[tzDate.getDay()];
+
+      return {
+        month: map.month,
+        day: map.day,
+        weekday: weekdayZh,
+        hour: map.hour === '24' ? '00' : map.hour,
+        minute: map.minute,
+        second: map.second
+      };
+    }
+
+    function getCurrentHHMM() {
+      const now = new Date();
+      return now.toTimeString().slice(0, 5);
+    }
+
+    /********************************************************************
+     * 2. 三地天氣預報模組（Open-Meteo 免費實時氣象 API + 離線優雅後備）
+     ********************************************************************/
+    const WEATHER_LOCATIONS = [
+      { id: 'hk', name: '香港旺角', lat: 22.3193, lon: 114.1694, tz: 'Asia/Hong_Kong', fallback: { temp: 24, min: 21, max: 26, hum: 72, rain: 20, code: 2 } },
+      { id: 'tw', name: '台灣楠梓', lat: 22.7284, lon: 120.3243, tz: 'Asia/Taipei', fallback: { temp: 26, min: 22, max: 29, hum: 68, rain: 10, code: 1 } },
+      { id: 'uk', name: '英國法恩伯勒', lat: 51.2900, lon: -0.7500, tz: 'Europe/London', fallback: { temp: 9, min: 5, max: 12, hum: 82, rain: 40, code: 3 } }
+    ];
+
+    // WMO 天氣代碼轉換為清晰繁體中文與大圖示
+    function decodeWeatherCode(code) {
+      if (code === 0) return { icon: '☀️', text: '天晴朗' };
+      if (code === 1 || code === 2) return { icon: '⛅', text: '大致天晴' };
+      if (code === 3) return { icon: '☁️', text: '多雲' };
+      if (code === 45 || code === 48) return { icon: '🌫️', text: '有霧' };
+      if (code >= 51 && code <= 57) return { icon: '🌦️', text: '毛毛雨' };
+      if (code >= 61 && code <= 67) return { icon: '🌧️', text: '有雨' };
+      if (code >= 71 && code <= 77) return { icon: '❄️', text: '降雪' };
+      if (code >= 80 && code <= 82) return { icon: '🌦️', text: '驟雨' };
+      if (code >= 85 && code <= 86) return { icon: '🌨️', text: '陣雪' };
+      if (code >= 95) return { icon: '⛈️', text: '雷暴' };
+      return { icon: '🌤️', text: '多雲間晴' };
+    }
+
+    async function fetchWithTimeout(url, timeoutMs = 8000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timer);
+        return res;
+      } catch (e) {
+        clearTimeout(timer);
+        throw e;
+      }
+    }
+
+    async function fetchAllWeather() {
+      let hasAnyError = false;
+
+      await Promise.all(WEATHER_LOCATIONS.map(async (loc) => {
+        try {
+          const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&current=temperature_2m,relative_humidity_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=${encodeURIComponent(loc.tz)}&forecast_days=1`;
+          const res = await fetchWithTimeout(url, 8000);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+
+          const currentTemp = Math.round(data.current.temperature_2m);
+          const humidity = Math.round(data.current.relative_humidity_2m);
+          const weatherInfo = decodeWeatherCode(data.current.weather_code);
+          const minTemp = Math.round(data.daily.temperature_2m_min[0]);
+          const maxTemp = Math.round(data.daily.temperature_2m_max[0]);
+          const rainProb = data.daily.precipitation_probability_max[0] ?? 0;
+
+          document.getElementById(`${loc.id}-w-icon`).textContent = weatherInfo.icon;
+          document.getElementById(`${loc.id}-w-desc`).textContent = weatherInfo.text;
+          document.getElementById(`${loc.id}-w-temp`).textContent = currentTemp;
+          document.getElementById(`${loc.id}-w-range`).textContent = `${minTemp} ~ ${maxTemp}°C`;
+          document.getElementById(`${loc.id}-w-hum`).textContent = `${humidity}%`;
+          document.getElementById(`${loc.id}-w-rain`).textContent = `${rainProb}%`;
+        } catch (err) {
+          hasAnyError = true;
+          console.warn(`讀取 ${loc.name} 天氣失敗，顯示離線參考數據:`, err);
+          const fb = loc.fallback;
+          const info = decodeWeatherCode(fb.code);
+          document.getElementById(`${loc.id}-w-icon`).textContent = info.icon;
+          document.getElementById(`${loc.id}-w-desc`).textContent = `${info.text} (參考)`;
+          document.getElementById(`${loc.id}-w-temp`).textContent = fb.temp;
+          document.getElementById(`${loc.id}-w-range`).textContent = `${fb.min} ~ ${fb.max}°C`;
+          document.getElementById(`${loc.id}-w-hum`).textContent = `${fb.hum}%`;
+          document.getElementById(`${loc.id}-w-rain`).textContent = `${fb.rain}%`;
+        }
+      }));
+
+      document.getElementById('last-weather-update').textContent = getCurrentHHMM();
+      const badge = document.getElementById('weather-status-badge');
+      badge.textContent = hasAnyError ? '離線參考模式' : '每15分鐘自動更新';
+    }
+
+    /********************************************************************
+     * 3. 城巴 970 / 970X 旺角登打士街站往港島方向實時到站模組
+     ********************************************************************/
+    // 旺角彌敦道登打士街南行站（往港島方向）標準城巴 Stop ID 為 001124
+    let dundasStopId = '001124';
+    let stopResolved = false;
+
+    async function resolveDundasStopId() {
+      if (stopResolved) return dundasStopId;
+      try {
+        const testRes = await fetchWithTimeout(`https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${dundasStopId}/970`, 6000);
+        if (testRes.ok) {
+          const testJson = await testRes.json();
+          if (testJson && Array.isArray(testJson.data) && testJson.data.length > 0) {
+            stopResolved = true;
+            return dundasStopId;
+          }
+        }
+
+        // 若預設編號無數據，自動搜尋 970 往港島方向（outbound）路線中的「登打士街」站點
+        const routeStopsRes = await fetchWithTimeout('https://rt.data.gov.hk/v2/transport/citybus/route-stop/CTB/970/outbound', 6000);
+        if (routeStopsRes.ok) {
+          const routeStopsJson = await routeStopsRes.json();
+          if (routeStopsJson && Array.isArray(routeStopsJson.data)) {
+            for (const item of routeStopsJson.data) {
+              const stopInfoRes = await fetchWithTimeout(`https://rt.data.gov.hk/v2/transport/citybus/stop/${item.stop}`, 4000);
+              if (stopInfoRes.ok) {
+                const stopInfoJson = await stopInfoRes.json();
+                if (stopInfoJson?.data?.name_tc && stopInfoJson.data.name_tc.includes('登打士街')) {
+                  dundasStopId = item.stop;
+                  stopResolved = true;
+                  return dundasStopId;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('自動確認登打士街站點編號時發生錯誤，沿用預設編號:', e);
+      }
+      return dundasStopId;
+    }
+
+    async function fetchBusETAForRoute(route) {
+      try {
+        const stopId = await resolveDundasStopId();
+        const url = `https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${stopId}/${route}`;
+        const res = await fetchWithTimeout(url, 8000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+
+        // 過濾往港島方向（dir === 'O'，即往數碼港 / 香港仔）並按到站次序排序取前 3 班
+        const now = new Date();
+        const arrivals = (json.data || [])
+          .filter(item => item.eta && (item.dir === 'O' || !item.dir))
+          .sort((a, b) => new Date(a.eta) - new Date(b.eta))
+          .slice(0, 3);
+
+        renderRouteArrivals(route, arrivals, now);
+        return true;
+      } catch (err) {
+        console.warn(`讀取 ${route} 到站時間失敗:`, err);
+        document.getElementById(`eta-${route}-1`).innerHTML = `<span class="text-lg font-black text-amber-700">暫無實時訊號</span>`;
+        document.getElementById(`eta-${route}-2`).textContent = `2) 請稍後更新`;
+        document.getElementById(`eta-${route}-3`).textContent = `3) 請稍後更新`;
+        return false;
+      }
+    }
+
+    function renderRouteArrivals(route, arrivals, now) {
+      const slot1 = document.getElementById(`eta-${route}-1`);
+      const slot2 = document.getElementById(`eta-${route}-2`);
+      const slot3 = document.getElementById(`eta-${route}-3`);
+
+      if (!arrivals || arrivals.length === 0) {
+        slot1.innerHTML = `<span class="text-lg md:text-xl font-black text-slate-600">尾班車已過 / 暫無班次</span>`;
+        slot2.textContent = `2) 未開出`;
+        slot3.textContent = `3) 未開出`;
+        return;
+      }
+
+      // 處理第 1 班車（特大顯示剩餘分鐘 + 到站時刻）
+      const first = formatArrivalItem(arrivals[0], now);
+      slot1.innerHTML = `
+        <span class="text-xl md:text-2xl font-black text-emerald-700 tabular-nums">${first.minText}</span>
+        <span class="bg-slate-200 text-slate-900 font-black text-sm md:text-base px-2 py-0.5 rounded-lg tabular-nums">${first.clockText}</span>
+      `;
+
+      // 處理第 2 班車
+      if (arrivals[1]) {
+        const second = formatArrivalItem(arrivals[1], now);
+        slot2.textContent = `2) ${second.minText} (${second.clockText})`;
+      } else {
+        slot2.textContent = `2) 暫無資料`;
+      }
+
+      // 處理第 3 班車
+      if (arrivals[2]) {
+        const third = formatArrivalItem(arrivals[2], now);
+        slot3.textContent = `3) ${third.minText} (${third.clockText})`;
+      } else {
+        slot3.textContent = `3) 暫無資料`;
+      }
+    }
+
+    function formatArrivalItem(item, now) {
+      const etaDate = new Date(item.eta);
+      const diffMs = etaDate - now;
+      const diffMins = Math.max(0, Math.round(diffMs / 60000));
+      const minText = diffMins === 0 ? '即將到站' : `${diffMins} 分鐘`;
+      const clockText = etaDate.toLocaleTimeString('zh-HK', {
+        timeZone: 'Asia/Hong_Kong',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      return { minText, clockText };
+    }
+
+    async function fetchAllBusETA() {
+      const results = await Promise.all([
+        fetchBusETAForRoute('970'),
+        fetchBusETAForRoute('970X')
+      ]);
+      document.getElementById('last-bus-update').textContent = getCurrentHHMM();
+      const badge = document.getElementById('bus-status-badge');
+      badge.textContent = results.every(Boolean) ? '城巴實時預報' : '網絡連線受限';
+    }
+
+    /********************************************************************
+     * 4. 網上電台串流播放器模組（RTHK 1 / 2 / 5 + 叱咤 903）
+     ********************************************************************/
+    const RADIO_STATIONS = [
+      {
+        name: '香港電台 第一台 (RTHK 1)',
+        shortName: 'RTHK 1',
+        url: 'https://rthkaudio1-lh.akamaihd.net/i/radio1_1@355864/master.m3u8'
+      },
+      {
+        name: '香港電台 第二台 (RTHK 2)',
+        shortName: 'RTHK 2',
+        url: 'https://rthkaudio2-lh.akamaihd.net/i/radio2_1@355865/master.m3u8'
+      },
+      {
+        name: '香港電台 第五台 (戲曲/長者台)',
+        shortName: 'RTHK 5',
+        url: 'https://rthkaudio5-lh.akamaihd.net/i/radio5_1@355868/master.m3u8'
+      },
+      {
+        name: '商業電台 叱咤 903',
+        shortName: '叱咤 903',
+        url: 'https://playlist.881903.com/903/playlist.m3u8',
+        fallbackNote: '如商台伺服器限制外部網頁串流，可切換 RTHK 台收聽'
+      }
+    ];
+
+    let currentStationIdx = 0;
+    let isPlaying = false;
+    let hlsInstance = null;
+
+    const audioEl = document.getElementById('radio-audio');
+    const statusEl = document.getElementById('radio-status');
+    const nameEl = document.getElementById('radio-current-name');
+    const playBtn = document.getElementById('play-pause-btn');
+    const playIcon = document.getElementById('play-btn-icon');
+    const playText = document.getElementById('play-btn-text');
+
+    function selectStation(index) {
+      currentStationIdx = index;
+      const station = RADIO_STATIONS[index];
+      nameEl.textContent = station.name;
+
+      // 更新按鈕高亮狀態
+      RADIO_STATIONS.forEach((_, i) => {
+        const btn = document.getElementById(`station-btn-${i}`);
+        if (i === index) {
+          btn.className = 'station-btn btn-press bg-rose-500 text-white border-2 border-rose-600 font-black text-sm md:text-base px-3 py-1.5 rounded-xl shadow-sm cursor-pointer';
+        } else {
+          btn.className = 'station-btn btn-press bg-slate-100 hover:bg-slate-200 text-slate-900 border-2 border-slate-300 font-black text-sm md:text-base px-3 py-1.5 rounded-xl cursor-pointer';
+        }
+      });
+
+      // 切換頻道時自動開始播放
+      startStream(station);
+    }
+
+    function startStream(station) {
+      statusEl.innerHTML = `<span class="text-amber-700">正在連接 ${station.shortName} 直播訊號... ⏳</span>`;
+
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+
+      try {
+        // iPad Safari 原生支援 HLS (.m3u8)
+        if (audioEl.canPlayType('application/vnd.apple.mpegurl')) {
+          audioEl.src = station.url;
+          audioEl.play()
+            .then(() => setPlayingUI(true, station))
+            .catch(() => handleStreamError(station));
+        } else if (window.Hls && Hls.isSupported()) {
+          // 桌面版 Chrome / Edge / Firefox 使用 hls.js 播放
+          hlsInstance = new Hls();
+          hlsInstance.loadSource(station.url);
+          hlsInstance.attachMedia(audioEl);
+          hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+            audioEl.play()
+              .then(() => setPlayingUI(true, station))
+              .catch(() => handleStreamError(station));
+          });
+          hlsInstance.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal) handleStreamError(station);
+          });
+        } else {
+          handleStreamError(station);
+        }
+      } catch (err) {
+        handleStreamError(station);
+      }
+    }
+
+    function handleStreamError(station) {
+      setPlayingUI(false, station);
+      const hint = station.fallbackNote ? `（${station.fallbackNote}）` : '（請檢查網絡或稍後重試）';
+      statusEl.innerHTML = `<span class="text-rose-700">⚠️ 暫時未能載入串流 ${hint}</span>`;
+    }
+
+    function togglePlayPause() {
+      const station = RADIO_STATIONS[currentStationIdx];
+      if (isPlaying) {
+        audioEl.pause();
+        setPlayingUI(false, station);
+        statusEl.innerHTML = `<span class="text-slate-600">已暫停播放 ⏸</span>`;
+      } else {
+        startStream(station);
+      }
+    }
+
+    function setPlayingUI(playing, station) {
+      isPlaying = playing;
+      if (playing) {
+        playBtn.className = 'btn-press bg-rose-500 hover:bg-rose-600 text-white font-black text-base md:text-xl px-5 py-2 rounded-xl border-2 border-rose-700 shadow-sm flex items-center gap-2 cursor-pointer';
+        playIcon.textContent = '⏸';
+        playText.textContent = '暫停';
+        statusEl.innerHTML = `
+          <span class="inline-flex items-end gap-1 h-4">
+            <span class="w-1 h-4 bg-emerald-600 rounded-full wave-bar"></span>
+            <span class="w-1 h-4 bg-emerald-600 rounded-full wave-bar"></span>
+            <span class="w-1 h-4 bg-emerald-600 rounded-full wave-bar"></span>
+          </span>
+          <span class="text-emerald-700">正在直播：${station.shortName}</span>
+        `;
+      } else {
+        playBtn.className = 'btn-press bg-emerald-500 hover:bg-emerald-600 text-white font-black text-base md:text-xl px-5 py-2 rounded-xl border-2 border-emerald-700 shadow-sm flex items-center gap-2 cursor-pointer';
+        playIcon.textContent = '▶';
+        playText.textContent = '播放';
+      }
+    }
+
+    /********************************************************************
+     * 5. 手動與定時自動更新控制
+     ********************************************************************/
+    async function manualRefreshAll() {
+      const icon = document.getElementById('refresh-icon');
+      icon.classList.add('animate-spin');
+      await Promise.all([fetchAllWeather(), fetchAllBusETA()]);
+      setTimeout(() => icon.classList.remove('animate-spin'), 500);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      // 啟動時鐘（每秒更新）
+      updateClocks();
+      setInterval(updateClocks, 1000);
+
+      // 首次載入三地天氣與城巴 970/970X 到站時間
+      fetchAllWeather();
+      fetchAllBusETA();
+
+      // 巴士每 30 秒自動更新，天氣每 15 分鐘自動更新
+      setInterval(fetchAllBusETA, 30000);
+      setInterval(fetchAllWeather, 900000);
+    });
+  </script>
+</body>
+</html>
